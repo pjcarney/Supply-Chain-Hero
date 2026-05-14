@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "UserProgress": {
+      "title": "User Progress",
+      "description": "Progress tracking for students on supply chain scenarios.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique identifier for the user."
+        },
+        "scores": {
+          "type": "object",
+          "description": "Map of scenario string IDs to their minimum days taken."
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last time the progress was saved."
+        }
+      },
+      "required": ["userId", "scores", "lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProgress",
+      "description": "Individual user progress and achievement tracking."
+    }
+  }
+}
