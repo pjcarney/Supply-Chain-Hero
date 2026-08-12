@@ -1,7 +1,7 @@
 export interface Location {
   id: string;
   name: string;
-  type: 'warehouse' | 'store' | 'factory';
+  type: 'warehouse' | 'store' | 'factory' | 'supplier';
   x: number; // 0-100 relative
   y: number; // 0-100 relative
   inventory: number;
@@ -9,6 +9,7 @@ export interface Location {
   delivered: number;
   demand?: number; // per day for stores
   production?: number; // per day for factories
+  rawInventory?: number; // raw materials for assembly
 }
 
 export interface Transport {
@@ -34,6 +35,11 @@ export interface CashFlow {
   total: number;
 }
 
+export interface KPIState {
+  unmetDemand: number;
+  idleTruckDays: number;
+}
+
 export interface GameState {
   cash: number;
   day: number;
@@ -46,4 +52,5 @@ export interface GameState {
   pendingOrders: { amount: number, deliveryDay: number }[];
   cumulativeFlow: CashFlow;
   cashHistory: number[];
+  kpis: KPIState;
 }

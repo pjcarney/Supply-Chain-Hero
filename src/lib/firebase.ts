@@ -1,16 +1,16 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, GithubAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 console.log('[Firebase] Config:', firebaseConfig);
-// FORCED to (default) for debugging rule deployment targeting
-const dbId = '(default)'; 
-console.log('[Firebase] Using Database ID (FORCED):', dbId);
+const dbId = firebaseConfig.firestoreDatabaseId || '(default)'; 
+console.log('[Firebase] Using Database ID:', dbId);
 export const db = getFirestore(app, dbId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const githubProvider = new GithubAuthProvider();
 
 // Connection Test
 async function testConnection() {
@@ -69,6 +69,16 @@ export const loginWithGoogle = async () => {
     return result.user;
   } catch (error) {
     console.error('Login failed:', error);
+    throw error;
+  }
+};
+
+export const loginWithGithub = async () => {
+  try {
+    const result = await signInWithPopup(auth, githubProvider);
+    return result.user;
+  } catch (error) {
+    console.error('GitHub Login failed:', error);
     throw error;
   }
 };

@@ -5,33 +5,51 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { TrendingUp, Calendar, Wallet, Warehouse, Store, Factory, LogIn, LogOut, Trophy } from 'lucide-react';
+import { TrendingUp, Calendar, Wallet, LogIn, LogOut, Trophy, HelpCircle, X, ArrowLeft, Undo2 } from 'lucide-react';
 import { useGameLogic } from './hooks/useGameLogic';
 import { GameMap } from './components/GameMap';
 import { ActionPanel } from './components/ActionPanel';
 import { CashFlowStatement } from './components/CashFlowStatement';
+import { KPIPanel } from './components/KPIPanel';
+import { ScenarioBriefingModal } from './components/ScenarioBriefingModal';
+import { StudentRecordsModal } from './components/StudentRecordsModal';
 import { FirebaseProvider, useFirebase } from './contexts/FirebaseContext';
 
 function SupplyChainHero() {
-  const { state, dispatchVehicle, returnToWarehouse, advanceDay, updatePendingLoad, updatePendingTarget, switchScenario, resetGame } = useGameLogic();
+  const { state, dispatchVehicle, returnToWarehouse, advanceDay, undoDay, canUndo, updatePendingLoad, updatePendingTarget, switchScenario, resetGame } = useGameLogic();
   const [showVictoryModal, setShowVictoryModal] = useState(false);
+  const [hasDismissedVictory, setHasDismissedVictory] = useState(false);
   const [showRecordsModal, setShowRecordsModal] = useState(false);
-  const { user, signIn, signOut, progress, saveProgress, saving } = useFirebase();
+  const [briefingScenario, setBriefingScenario] = useState<number | null>(1); // Open Scenario 1 briefing initially on load
+  const { user, signIn, signInWithGithub, signOut, progress, saveProgress, saving } = useFirebase();
+
+  const handleUndoDay = () => {
+    setHasDismissedVictory(false);
+    setShowVictoryModal(false);
+    undoDay();
+  };
+
+  useEffect(() => {
+    if (!state.isGameOver) {
+      setHasDismissedVictory(false);
+    }
+  }, [state.isGameOver]);
 
   useEffect(() => {
     if (state.isGameOver) {
-      console.log('Victory achieved! Day:', state.day, 'Scenario:', state.scenario);
-      // Save progress to Firebase if logged in
-      if (user) {
-        console.log('User logged in, attempting to save progress...');
-        saveProgress(state.scenario, state.day).then(() => {
-          console.log('saveProgress call completed.');
-        }).catch(err => {
-          console.error('saveProgress error:', err);
-        });
-      } else {
-        console.log('User not logged in, progress will not be saved.');
+      if (hasDismissedVictory) {
+        setShowVictoryModal(false);
+        return;
       }
+      console.log('Game ended. Day:', state.day, 'Scenario:', state.scenario);
+      const isCashFlowScenario = [4, 5, 7].includes(state.scenario);
+      const isSuccess = isCashFlowScenario ? state.cumulativeFlow.total > 0 : true;
+      const outcome = isSuccess ? 'victory' : 'failed';
+      const scoreValue = (state.scenario === 3 || isCashFlowScenario) ? state.cumulativeFlow.total : state.day;
+
+      saveProgress(state.scenario, scoreValue, { outcome, cashFlow: state.cumulativeFlow.total }).catch(err => {
+        console.error('saveProgress error:', err);
+      });
       
       const timer = setTimeout(() => {
         setShowVictoryModal(true);
@@ -40,7 +58,69 @@ function SupplyChainHero() {
     } else {
       setShowVictoryModal(false);
     }
-  }, [state.isGameOver, user, state.scenario, state.day, saveProgress]);
+  }, [state.isGameOver, state.scenario, state.day, state.cumulativeFlow.total, saveProgress, hasDismissedVictory]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showRecordsModal) setShowRecordsModal(false);
+        if (briefingScenario !== null) setBriefingScenario(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showRecordsModal, briefingScenario]);
+
+  const handleAdvanceDay = () => {
+    // Save in_progress attempt if not completed
+    const scenarioKey = `scenario_${state.scenario}`;
+    const isCompleted = progress?.scores?.[scenarioKey] !== undefined || progress?.attempts?.some(a => a.scenario === state.scenario && a.outcome === 'victory');
+    if (!isCompleted) {
+      saveProgress(state.scenario, state.day, { outcome: 'in_progress', cashFlow: state.cumulativeFlow.total }).catch(() => {});
+    }
+
+    const pendingDispatches = state.fleet
+      .filter(v => v.status === 'idle' && v.pendingTargetId)
+      .map(v => ({
+        vehicleId: v.id,
+        targetId: v.pendingTargetId!,
+        amount: v.pendingLoad
+      }));
+    
+    advanceDay(pendingDispatches);
+  };
+
+  const handleSwitchScenario = (num: number) => {
+    const scenarioKey = `scenario_${num}`;
+    const isCompleted = progress?.scores?.[scenarioKey] !== undefined || progress?.attempts?.some(a => a.scenario === num && a.outcome === 'victory');
+    const hasAttempt = progress?.attempts?.some(a => a.scenario === num);
+    if (!isCompleted && !hasAttempt) {
+      saveProgress(num, 1, { outcome: 'in_progress' }).catch(() => {});
+    }
+    switchScenario(num);
+    setBriefingScenario(num);
+  };
+
+  const getScenarioStatus = (scenarioNum: number) => {
+    if (scenarioNum === state.scenario) {
+      return 'current';
+    }
+    const scenarioKey = `scenario_${scenarioNum}`;
+    const hasVictoryScore = progress?.scores && progress.scores[scenarioKey] !== undefined;
+    const hasVictoryAttempt = progress?.attempts && progress.attempts.some(a => a.scenario === scenarioNum && a.outcome === 'victory');
+
+    if (hasVictoryScore || hasVictoryAttempt) {
+      return 'completed';
+    }
+
+    const hasAnyAttempt = progress?.attempts && progress.attempts.some(a => a.scenario === scenarioNum);
+
+    if (hasAnyAttempt) {
+      return 'failed';
+    }
+
+    return 'not_attempted';
+  };
 
   return (
     <div className="min-h-screen bg-[#0A0A0C] text-white selection:bg-blue-500 selection:text-white">
@@ -55,22 +135,61 @@ function SupplyChainHero() {
               <h1 className="font-sans font-black uppercase tracking-tighter text-3xl leading-tight">SupplyChain Hero</h1>
               <div className="flex gap-4 items-center">
                 <p className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/30">Logistics Simulator v1.2</p>
-                <div className="flex items-center gap-2 bg-white/5 px-2 py-0.5 rounded border border-white/10 ml-2">
-                  <span className="text-[8px] font-bold text-white/20 uppercase tracking-widest">Scenario</span>
-                  {[1, 2, 3].map(num => (
-                    <button
-                      key={num}
-                      onClick={() => switchScenario(num)}
-                      className={`text-[10px] font-mono px-2 rounded transition-all ${
-                        state.scenario === num 
-                          ? 'bg-blue-500 text-white font-bold' 
-                          : 'text-white/40 hover:text-white hover:bg-white/5'
-                      }`}
-                    >
-                      {num}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2 bg-white/5 px-2.5 py-1 rounded-xl border border-white/10 ml-2">
+                  <span className="text-[8px] font-bold text-white/30 uppercase tracking-widest hidden sm:inline">Scenario</span>
+                  <div className="flex items-center gap-1.5">
+                    {[1, 2, 3, 4, 5, 6, 7].map(num => {
+                      const status = getScenarioStatus(num);
+                      let buttonStyle = "";
+                      let titleText = "";
+
+                      switch (status) {
+                        case 'current':
+                          buttonStyle = "bg-blue-600 text-white font-bold ring-2 ring-blue-400 shadow-[0_0_12px_rgba(37,99,235,0.6)]";
+                          titleText = `Scenario ${num}: Current Active Scenario (Blue)`;
+                          break;
+                        case 'completed':
+                          buttonStyle = "bg-emerald-600 hover:bg-emerald-500 text-white font-bold border border-emerald-400/50 shadow-[0_0_8px_rgba(16,185,129,0.3)]";
+                          titleText = `Scenario ${num}: Successfully Completed (Green)`;
+                          break;
+                        case 'failed':
+                          buttonStyle = "bg-rose-600 hover:bg-rose-500 text-white font-bold border border-rose-400/50 shadow-[0_0_8px_rgba(244,63,94,0.3)]";
+                          titleText = `Scenario ${num}: Attempted - Not Completed Yet (Red)`;
+                          break;
+                        case 'not_attempted':
+                        default:
+                          buttonStyle = "bg-black text-white/60 hover:text-white hover:bg-neutral-900 border border-neutral-800";
+                          titleText = `Scenario ${num}: Not Attempted Yet (Black)`;
+                          break;
+                      }
+
+                      return (
+                        <button
+                          key={num}
+                          onClick={() => handleSwitchScenario(num)}
+                          title={titleText}
+                          className={`w-7 h-7 text-xs font-mono rounded-lg transition-all flex items-center justify-center cursor-pointer ${buttonStyle}`}
+                        >
+                          {num}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                <div className="hidden xl:flex items-center gap-2 text-[9px] font-mono uppercase tracking-wider text-white/40 ml-1 bg-black/40 px-2.5 py-1 rounded-lg border border-white/5">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block shadow-[0_0_6px_rgba(59,130,246,0.8)]"></span>Current</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shadow-[0_0_6px_rgba(16,185,129,0.8)]"></span>Passed</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500 inline-block shadow-[0_0_6px_rgba(244,63,94,0.8)]"></span>Failed</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-black border border-white/40 inline-block"></span>Unattempted</span>
+                </div>
+                <button
+                  onClick={() => setBriefingScenario(state.scenario)}
+                  className="flex items-center gap-1 bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 px-2.5 py-1 rounded-xl border border-blue-500/20 transition-all font-mono text-[9px] uppercase tracking-widest cursor-pointer ml-1"
+                  title="View Scenario Briefing"
+                >
+                  <HelpCircle size={11} className="mr-0.5 inline" />
+                  Briefing
+                </button>
               </div>
             </div>
           </div>
@@ -78,8 +197,8 @@ function SupplyChainHero() {
           <div className="flex items-center gap-8">
             {/* Status Indicators */}
             <div className="flex items-center gap-6 mr-4">
-              <div className={`flex items-center gap-4 transition-opacity ${state.scenario < 3 ? 'opacity-20' : 'opacity-100'}`}>
-                {state.scenario >= 3 && state.cashHistory.length > 1 && (
+              <div className="flex items-center gap-4 transition-opacity">
+                {state.cashHistory.length > 1 && (
                   <div className="h-12 w-32 hidden sm:block">
                     <svg viewBox={`0 0 100 40`} className="w-full h-full overflow-visible">
                       <polyline
@@ -102,10 +221,10 @@ function SupplyChainHero() {
                 )}
                 <div className="flex flex-col items-end">
                   <span className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-1 flex items-center gap-2">
-                    <Wallet size={12} className={state.scenario < 3 ? 'text-gray-500' : 'text-blue-400'} /> Cash Flow
+                    <Wallet size={12} className={state.scenario < 4 ? 'text-blue-400/50' : 'text-blue-400'} /> Cash Flow
                   </span>
-                  <span className={`font-mono text-xl font-black tracking-tighter ${state.scenario < 3 ? 'text-white' : (state.cumulativeFlow.total >= 0 ? 'text-emerald-400' : 'text-rose-400')}`}>
-                    {state.scenario < 3 ? '---' : `${state.cumulativeFlow.total >= 0 ? '+' : ''}$${state.cumulativeFlow.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  <span className={`font-mono text-xl font-black tracking-tighter ${state.cumulativeFlow.total >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {`${state.cumulativeFlow.total >= 0 ? '+' : ''}$${state.cumulativeFlow.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </span>
                 </div>
               </div>
@@ -122,17 +241,15 @@ function SupplyChainHero() {
 
             {/* Nav Tools */}
             <div className="flex items-center gap-2 pr-8 border-r border-[#2A2A2E]">
-              {user && (
-                <button
-                  onClick={() => setShowRecordsModal(true)}
-                  className="flex items-center gap-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 px-3 py-2 rounded-xl border border-yellow-500/20 transition-all group"
-                  title="Personal Records"
-                >
-                  <Trophy size={16} className="group-hover:scale-110 transition-transform" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Records</span>
-                  {saving && <span className="w-1 h-1 bg-yellow-500 rounded-full animate-ping" />}
-                </button>
-              )}
+              <button
+                onClick={() => setShowRecordsModal(true)}
+                className="flex items-center gap-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 px-3 py-2 rounded-xl border border-yellow-500/20 transition-all group cursor-pointer"
+                title="Student Records & History"
+              >
+                <Trophy size={16} className="group-hover:scale-110 transition-transform text-yellow-400" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Records</span>
+                {saving && <span className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-ping" />}
+              </button>
             </div>
 
             {/* User Auth */}
@@ -165,76 +282,33 @@ function SupplyChainHero() {
         </div>
       </nav>
 
-      {/* Main Content Layout */}
-      <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-1 lg:grid-cols-12 gap-10">
+      <main className="max-w-[1800px] mx-auto p-4 md:p-6 lg:p-8 flex flex-col md:flex-row gap-6 lg:gap-8">
         {/* Left Column: Visual Map */}
-        <section className="lg:col-span-8 flex flex-col gap-8">
-          <div className="flex-1 min-h-[500px]">
+        <section className="flex-1 flex flex-col gap-6 min-w-0">
+          <div className="h-[500px] md:h-[650px] lg:h-[750px] bg-[#1A1A1E] rounded-3xl border border-[#2A2A2E] overflow-hidden shadow-2xl relative">
             <GameMap locations={state.locations} fleet={state.fleet} />
           </div>
-          
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <CashFlowStatement state={state} />
-
-            <div className="bg-[#1A1A1E] border border-[#2A2A2E] p-6 rounded-2xl shadow-xl h-[450px] flex flex-col">
-              <div className="mb-6 flex justify-between items-center">
-                <div>
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40 mb-1">Node Analytics</h3>
-                  <h2 className="text-xl font-sans font-black uppercase tracking-tight">Supply Chain Inventory</h2>
-                </div>
-                <div className="bg-blue-500/10 border border-blue-500/20 px-2 py-1 rounded text-[10px] font-mono text-blue-400">
-                  {state.locations.length} ACTIVE NODES
-                </div>
-              </div>
-              <div className="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                {state.locations.map(loc => (
-                  <div key={loc.id} className="bg-black/20 border border-[#2A2A2E] p-4 rounded-xl flex justify-between items-center group hover:border-blue-500/50 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className={`p-2 rounded-lg ${
-                        loc.type === 'warehouse' ? 'bg-blue-600/20 text-blue-400' : 
-                        loc.type === 'factory' ? 'bg-amber-600/20 text-amber-400' :
-                        'bg-emerald-600/20 text-emerald-400'
-                      }`}>
-                        {loc.type === 'warehouse' ? <Warehouse size={18} /> : 
-                         loc.type === 'factory' ? <Factory size={18} /> :
-                         <Store size={18} />}
-                      </div>
-                      <div>
-                        <p className="text-[10px] uppercase font-bold text-white/30">{loc.type}</p>
-                        <p className="font-sans font-black uppercase tracking-tighter text-sm group-hover:text-blue-400 transition-colors">{loc.name}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] uppercase font-bold text-white/30 mb-1">Inv / Target</p>
-                      <div className="flex items-baseline justify-end gap-1">
-                        <p className="font-mono text-sm font-black tracking-tighter">{loc.inventory}</p>
-                        <span className="text-[8px] font-mono text-white/20">/ {loc.capacity}</span>
-                        {loc.type === 'store' && (
-                           <div className="ml-2 px-1.5 py-0.5 bg-emerald-500/10 rounded border border-emerald-500/20">
-                             <span className="text-[10px] font-mono font-bold text-emerald-400">{loc.delivered}/26</span>
-                           </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <KPIPanel state={state} />
           </div>
         </section>
 
-        {/* Right Column: Controls */}
-        <aside className="lg:col-span-4 space-y-8">
+        {/* Right Column: Controls & Analytics */}
+        <aside className="w-full md:w-[280px] lg:w-[330px] space-y-6 shrink-0">
           <ActionPanel 
             state={state} 
             onDispatch={dispatchVehicle} 
-            onAdvanceDay={advanceDay}
+            onAdvanceDay={handleAdvanceDay}
+            onUndoDay={handleUndoDay}
+            canUndo={canUndo}
             onReset={resetGame}
             onUpdatePendingLoad={updatePendingLoad}
             onUpdatePendingTarget={updatePendingTarget}
           />
         </aside>
       </main>
+
 
       {/* Footer Info */}
       <footer className="fixed bottom-0 left-0 right-0 bg-[#0A0A0C] border-t border-[#2A2A2E] px-8 py-2 flex justify-between items-center text-[9px] font-mono uppercase tracking-[0.3em] text-white/20">
@@ -248,69 +322,17 @@ function SupplyChainHero() {
         </div>
       </footer>
 
+      {/* Scenario Briefing Modal */}
+      {briefingScenario !== null && (
+        <ScenarioBriefingModal
+          scenario={briefingScenario}
+          onClose={() => setBriefingScenario(null)}
+        />
+      )}
+
       {/* Personal Records Modal */}
       {showRecordsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <motion.div 
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="bg-[#1A1A1E] border border-[#2A2A2E] w-full max-w-lg rounded-[32px] overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]"
-          >
-            <div className="p-8 border-b border-[#2A2A2E] flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                <div className="bg-yellow-500/20 p-3 rounded-2xl text-yellow-500">
-                  <Trophy size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-sans font-black uppercase tracking-tight">Personal Records</h2>
-                  <p className="text-[10px] font-mono uppercase tracking-widest text-white/30">Your career trajectory</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowRecordsModal(false)}
-                className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/40 hover:text-white transition-all text-xl font-light"
-              >
-                &times;
-              </button>
-            </div>
-            
-            <div className="p-8 space-y-4">
-              {[1, 2, 3].map(num => {
-                const score = progress?.scores?.[`scenario_${num}`];
-                return (
-                  <div key={num} className="flex items-center justify-between p-6 bg-black/40 rounded-2xl border border-white/5 group hover:border-yellow-500/20 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center text-xs font-black group-hover:bg-yellow-500/10 group-hover:text-yellow-500 transition-all">
-                        S{num}
-                      </div>
-                      <div>
-                        <span className="block text-lg font-sans font-bold text-white/80">Scenario {num}</span>
-                        <span className="text-[10px] uppercase font-bold text-white/20 tracking-widest">
-                          {num === 3 ? 'Economic Operations' : 'Core Movement'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                       <p className="text-[10px] uppercase font-bold text-white/20 mb-1">Best Time</p>
-                       <p className={`text-2xl font-mono font-black ${score ? 'text-yellow-500' : 'text-white/10'}`}>
-                         {score ? `${score} DAYS` : 'INCOMPLETE'}
-                       </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            
-            <div className="p-8 bg-black/20 flex justify-center">
-              <button 
-                onClick={() => setShowRecordsModal(false)}
-                className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-colors"
-              >
-                — Close Flight Deck Records —
-              </button>
-            </div>
-          </motion.div>
-        </div>
+        <StudentRecordsModal onClose={() => setShowRecordsModal(false)} />
       )}
 
       {/* Game Over Message Overlay */}
@@ -324,13 +346,20 @@ function SupplyChainHero() {
             <div className="w-24 h-24 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-8 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
               <TrendingUp size={48} />
             </div>
-            <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-emerald-400">Simulation Complete</h2>
+            <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-emerald-400">
+              {(state.scenario === 4 || state.scenario === 5 || state.scenario === 7) ? (state.cumulativeFlow.total > 0 ? 'Mission Success' : 'Simulation End') : 'Mission Success'}
+            </h2>
             <p className="text-xl text-white/60 mb-10 font-sans">
-              Excellent work! You have successfully delivered the required 26 pallets to each retail location. 
-              The supply chain is fully operational and optimized for peak efficiency.
+              {(state.scenario === 4 || state.scenario === 5 || state.scenario === 7) ? (
+                state.cumulativeFlow.total > 0 
+                  ? `Incredible management. You generated a positive net flow of $${state.cumulativeFlow.total.toLocaleString()} over 20 days.`
+                  : `Scenario finalized. You finished with a net flow of $${state.cumulativeFlow.total.toLocaleString()}. This simulation highlights the difficulty of inventory costs!`
+              ) : (
+                "Excellent work! You have successfully delivered the required 26 pallets to each retail location and optimized the supply chain."
+              )}
             </p>
-            <div className={`grid ${state.scenario >= 3 ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-10`}>
-              {state.scenario >= 3 && (
+            <div className={`grid ${(state.scenario === 4 || state.scenario === 5 || state.scenario === 7) ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-10`}>
+              {(state.scenario === 4 || state.scenario === 5 || state.scenario === 7) && (
                 <div className="bg-black/40 p-4 rounded-2xl border border-white/5">
                   <p className="text-[10px] uppercase font-bold text-white/30 mb-1">Net Scenario Cash Flow</p>
                   <p className={`text-2xl font-mono font-black ${state.cumulativeFlow.total >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -343,12 +372,32 @@ function SupplyChainHero() {
                 <p className="text-2xl font-mono font-black">{state.day}</p>
               </div>
             </div>
-            <button 
-              onClick={() => resetGame()}
-              className="w-full bg-emerald-500 hover:bg-emerald-400 text-[#0A0A0C] font-black uppercase tracking-widest py-5 rounded-2xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:shadow-[0_0_40px_rgba(16,185,129,0.6)] font-sans"
-            >
-              Restart Simulation
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3">
+              {canUndo && (
+                <button 
+                  onClick={handleUndoDay}
+                  className="flex-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-black uppercase tracking-widest py-4 rounded-2xl border border-amber-500/30 transition-all font-sans cursor-pointer text-xs flex items-center justify-center gap-2"
+                >
+                  <Undo2 size={16} />
+                  Undo 1 Day
+                </button>
+              )}
+              <button 
+                onClick={() => setHasDismissedVictory(true)}
+                className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black uppercase tracking-widest py-4 rounded-2xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_40px_rgba(16,185,129,0.5)] font-sans cursor-pointer text-xs"
+              >
+                Review KPIs
+              </button>
+              <button 
+                onClick={() => {
+                  setHasDismissedVictory(false);
+                  resetGame();
+                }}
+                className="flex-1 bg-white/5 hover:bg-white/10 text-white font-black uppercase tracking-widest py-4 rounded-2xl border border-white/10 transition-all font-sans cursor-pointer text-xs"
+              >
+                Restart Scenario
+              </button>
+            </div>
           </motion.div>
         </div>
       )}
